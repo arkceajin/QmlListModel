@@ -1,2 +1,2 @@
 # QMLDataModel
-Expose a C++ data structure to QML, easily access data from C++ and QML both sides.
+Expose a C++ data structure list to QML, easily access data from C++ and QML both sides.
