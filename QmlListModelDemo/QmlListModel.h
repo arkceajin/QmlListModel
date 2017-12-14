@@ -18,6 +18,38 @@ class QAbstractBase : public QAbstractListModel
 public:
     explicit QAbstractBase(QObject *parent = 0):
     QAbstractListModel(parent){}
+
+    virtual void fromBytes(QDataStream& s){
+        Q_UNUSED(s);
+    }
+
+    virtual void toBytes(QDataStream& s){
+        Q_UNUSED(s);
+    }
+
+    virtual QJsonArray toJson(){
+        return QJsonArray();
+    }
+
+    virtual bool fromJson(QJsonArray array){
+        Q_UNUSED(array);
+        return false;
+    }
+
+    virtual bool jsonToObj(const QJsonValue &jsonValue, QObject *obj){
+        Q_UNUSED(jsonValue);
+        Q_UNUSED(obj);
+        return false;
+    }
+
+    virtual QByteArray serialize(){
+        return QByteArray();
+    }
+
+    virtual void unserialize(QByteArray data) {
+        Q_UNUSED(data);
+    }
+
 };
 
 #define QML_LIST_MODEL \
@@ -40,17 +72,22 @@ class QmlListModel : public QAbstractBase
 {
 public:
     inline explicit QmlListModel(QObject *parent = 0);
+    inline explicit QmlListModel(QJsonArray jsonArray){
+        fromJson(jsonArray);
+    }
+    inline explicit QmlListModel(QByteArray byteArray){
+        unserialize(byteArray);
+    }
     ~QmlListModel();
 
-#ifdef TO_BYTE_ARRAY
     /**
      * @brief serialize
      * @return Serialized data
      */
-    QByteArray serialize(){
+    inline QByteArray serialize() override {
         QByteArray buffer;
         QDataStream stream(&buffer, QIODevice::WriteOnly);
-        stream<<mData;
+        stream<<this;
         return buffer;
     }
 
@@ -58,7 +95,7 @@ public:
      * @brief unserialize
      * @param data Serialized data
      */
-    void unserialize(QByteArray data){
+    inline void unserialize(QByteArray data) override {
         if(!data.isEmpty()){
             clear();
             QDataStream stream(data);
@@ -74,20 +111,7 @@ public:
      */
     friend QDataStream& operator>>(QDataStream& s, QmlListModel<T>* data)
     {
-        QList<T*>& l = data->mData;
-        l.clear();
-        quint32 c;
-        s >> c;
-        l.reserve(c);
-        for(quint32 i = 0; i < c; ++i)
-        {
-            T* t = new T;
-            s >> t;
-            //l.append(t);
-            data->appendData(t);
-            if (s.atEnd())
-                break;
-        }
+        data->fromBytes(s);
         return s;
     }
 
@@ -97,62 +121,21 @@ public:
      * @param data Origin
      * @return
      */
-    friend QDataStream& operator<<(QDataStream& s, const QmlListModel<T>* data)
+    friend QDataStream& operator<<(QDataStream& s, QmlListModel<T>* data)
     {
-        const QList<T*>& l = data->mData;
-        s << quint32(l.size());
-        for (int i = 0; i < l.size(); ++i)
-            s << l.at(i);
+        data->toBytes(s);
         return s;
     }
-#endif
+
+    void fromBytes(QDataStream& s) override;
+
+    void toBytes(QDataStream& s) override;
 
     /**
      * @brief toJson
      * @return Json array
      */
-    QJsonArray toJson(){
-        QJsonArray jsonArray;
-        foreach (T* data, mData) {
-            QJsonObject jsonObj;
-            const QMetaObject* metaData = data->metaObject();
-            //for(int i = T::staticMetaObject.propertyOffset(); i < T::staticMetaObject.propertyCount(); ++i) {
-            for(int i = metaData->propertyOffset(); i < metaData->propertyCount(); ++i) {
-                const QMetaProperty& p = metaData->property(i);
-                const QVariant& v = p.read(data);
-                if(QString(v.typeName()).endsWith('*')){
-                    QmlListModel* sub = reinterpret_cast<QmlListModel*>(v.value<QObject*>());
-                    if(sub != Q_NULLPTR){
-                        jsonObj.insert(p.name(), sub->toJson());
-                    } else {
-                        jsonObj.insert(p.name(), QJsonValue());
-                    }
-                } else {
-                    switch (p.type()) {
-                    case QVariant::Bool:
-                        jsonObj.insert(p.name(), v.toBool());
-                        break;
-                    case QVariant::Double:
-                        jsonObj.insert(p.name(), v.toDouble());
-                        break;
-                    case QVariant::UInt:
-                    case QVariant::Int:
-                        jsonObj.insert(p.name(), v.toInt());
-                        break;
-                    case QVariant::Char:
-                    case QVariant::String:
-                        jsonObj.insert(p.name(), v.toString());
-                        break;
-                    default:
-                        qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Wrong property."<<p.typeName()<<p.name()<<v;
-                        break;
-                    }
-                }
-            }
-            jsonArray.append(jsonObj);
-        }
-        return jsonArray;
-    }
+    QJsonArray toJson() override;
 
     /**
      * @brief toJsonDoc
@@ -181,85 +164,14 @@ public:
      * @param obj destination
      * @return the result of converion
      */
-    bool jsonToObj(const QJsonValue& jsonValue, T* obj){
-        if(!jsonValue.isObject()){
-            return false;
-        }
-        const QJsonObject& jsonObj = jsonValue.toObject();
-        if(jsonObj.size() != (T::staticMetaObject.propertyCount() - T::staticMetaObject.propertyOffset())){
-            return false;
-        }
-        const QMetaObject* metaData = obj->metaObject();
-        for(int i = metaData->propertyOffset(); i < metaData->propertyCount(); ++i) {
-            const QMetaProperty& p = metaData->property(i);
-            const QJsonValue& v = jsonObj.value(p.name());
-            const QVariant& orgValue = p.read(obj);
-            if(QString(p.typeName()).endsWith('*')){
-                QmlListModel* sub = reinterpret_cast<QmlListModel*>(orgValue.value<QObject*>());
-                if(v.isArray()){
-                    if(sub != Q_NULLPTR){
-                        if(!sub->fromJson(v.toArray()))
-                            return false;
-                    } else {
-                        sub = new QmlListModel(v.toArray());
-                    }
-                } else if(v.isNull()){
-                    if(sub != Q_NULLPTR)
-                        sub->deleteLater();
-                } else {
-                    qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Wrong property type."<<p.typeName()<<p.name()<<v;
-                    return false;
-                }
-            } else {
-                 if(!p.write(obj, QVariant(v))){
-                    qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Write property failed."<<p.typeName()<<p.name()<<v;
-                    return false;
-                 }
-            }
-        }
-        return true;
-    }
+    bool jsonToObj(const QJsonValue& jsonValue, QObject* obj) override;
 
     /**
      * @brief fromJson
      * @param array Json array
      * @return the result of converion
      */
-    bool fromJson(QJsonArray array){
-        int i,
-            mid = qMin(mData.size(), array.size()),
-            max = qMax(mData.size(), array.size());
-        /**
-          * Replace the exists
-          */
-        for(i = 0; i < mid; i++){
-            if(!jsonToObj(array.at(i), mData[i])){
-                return false;
-            }
-        }
-        if(array.size() < mData.size()){
-            /**
-              * Remove the out of bounds
-              */
-            for(i = mid; i < max; i++){
-                if(!removeData(i)){
-                    return false;
-                }
-            }
-        } else {
-            for(i = mid; i < max; i++){
-                T* d = new T;
-                if(jsonToObj(array.at(i), d)){
-                    appendData(d);
-                } else {
-                    d->deleteLater();
-                    qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Append failed."<<i;
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
+    bool fromJson(QJsonArray array) override;
 
     /**
      * @brief clear
@@ -328,6 +240,7 @@ public:
      * @return
      */
     static QVariant create_();
+
     /**
      * @brief append_
      * @param data
@@ -376,6 +289,7 @@ protected:
      * @brief Data list
      */
     QList<T*> mData;
+
 };
 
 /**
@@ -391,6 +305,182 @@ template<typename T>
 QmlListModel<T>::~QmlListModel()
 {
     clear();
+}
+
+template<typename T>
+void QmlListModel<T>::toBytes(QDataStream &s)
+{
+    const QList<T*>& l = mData;
+    s << quint32(l.size());
+    for (int i = 0; i < l.size(); ++i) {
+        T* t = l.at(i);
+        const QMetaObject* metaData = t->metaObject();
+        for(int j = metaData->propertyOffset(); j < metaData->propertyCount(); ++j) {
+            const QMetaProperty& p = metaData->property(j);
+            const QVariant& v = p.read(t);
+            if(QString(p.typeName()).endsWith('*')){
+                s << reinterpret_cast<QmlListModel*>(qvariant_cast<QObject *>(p.read(t)));
+            } else {
+                s << v;
+            }
+        }
+    }
+}
+
+template<typename T>
+QJsonArray QmlListModel<T>::toJson()
+{
+    QJsonArray jsonArray;
+    foreach (T* t, mData) {
+        QJsonObject jsonObj;
+        const QMetaObject* metaData = t->metaObject();
+        for(int i = metaData->propertyOffset(); i < metaData->propertyCount(); ++i) {
+            const QMetaProperty& p = metaData->property(i);
+            const QVariant& v = p.read(t);
+            if(QString(p.typeName()).endsWith('*')){
+                QmlListModel* subList = reinterpret_cast<QmlListModel*>(qvariant_cast<QObject *>(p.read(t)));
+                if(subList != Q_NULLPTR){
+                    jsonObj.insert(p.name(), subList->toJson());
+                } else {
+                    jsonObj.insert(p.name(), QJsonValue());
+                }
+            } else {
+                switch (p.type()) {
+                case QVariant::Bool:
+                    jsonObj.insert(p.name(), v.toBool());
+                    break;
+                case QVariant::Double:
+                    jsonObj.insert(p.name(), v.toDouble());
+                    break;
+                case QVariant::UInt:
+                case QVariant::Int:
+                    jsonObj.insert(p.name(), v.toInt());
+                    break;
+                case QVariant::Char:
+                case QVariant::String:
+                    jsonObj.insert(p.name(), v.toString());
+                    break;
+                default:
+                    qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Wrong property."<<p.typeName()<<p.name()<<v;
+                    break;
+                }
+            }
+        }
+        jsonArray.append(jsonObj);
+    }
+    return jsonArray;
+}
+
+template<typename T>
+bool QmlListModel<T>::jsonToObj(const QJsonValue &jsonValue, QObject *obj)
+{
+    if(!jsonValue.isObject() || obj == Q_NULLPTR){
+        return false;
+    }
+    const QJsonObject& jsonObj = jsonValue.toObject();
+    const QMetaObject* metaData = obj->metaObject();
+    if(jsonObj.size() != (metaData->propertyCount() - metaData->propertyOffset())){
+        return false;
+    }
+    for(int i = metaData->propertyOffset(); i < metaData->propertyCount(); ++i) {
+        const QMetaProperty& p = metaData->property(i);
+        const QJsonValue& v = jsonObj.value(p.name());
+        if(QString(p.typeName()).endsWith('*')){
+            QmlListModel* subList = reinterpret_cast<QmlListModel*>(qvariant_cast<QObject *>(p.read(obj)));;
+            if(v.isArray()){
+                if(subList != Q_NULLPTR){
+                    if(!subList->fromJson(v.toArray()))
+                        return false;
+                } else {
+                    //subList = new QmlListModel(v.toArray()); // TBD
+                    qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Null property.";
+                    return false;
+                }
+            } else if(v.isNull()){
+                if(subList != Q_NULLPTR)
+                    subList->deleteLater();
+            } else {
+                qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Wrong property type."<<p.typeName()<<p.name()<<v;
+                return false;
+            }
+        } else {
+             if(!p.write(obj, QVariant(v))){
+                qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Write property failed."<<p.typeName()<<p.name()<<v;
+                return false;
+             }
+        }
+    }
+    return true;
+}
+
+template<typename T>
+bool QmlListModel<T>::fromJson(QJsonArray array)
+{
+    int i,
+        mid = qMin(mData.size(), array.size()),
+        max = qMax(mData.size(), array.size());
+    /**
+      * Replace the exists
+      */
+    for(i = 0; i < mid; i++){
+        if(!jsonToObj(array.at(i), mData[i])){
+            return false;
+        }
+    }
+    if(array.size() < mData.size()){
+        /**
+          * Remove the out of bounds
+          */
+        for(i = mid; i < max; i++){
+            if(!removeData(i)){
+                return false;
+            }
+        }
+    } else {
+        for(i = mid; i < max; i++){
+            T* d = new T;
+            if(jsonToObj(array.at(i), d)){
+                appendData(d);
+            } else {
+                d->deleteLater();
+                qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Append failed."<<i<<T::staticMetaObject.className();
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+template<typename T>
+void QmlListModel<T>::fromBytes(QDataStream &s)
+{
+    QList<T*>& l = this->mData;
+    l.clear();
+    quint32 c;
+    s >> c;
+    l.reserve(c);
+    for(quint32 i = 0; i < c; ++i) {
+        T* t = new T;
+        const QMetaObject* metaData = t->metaObject();
+        for(int j = metaData->propertyOffset(); j < metaData->propertyCount(); ++j) {
+            const QMetaProperty& p = metaData->property(j);
+            if(QString(p.typeName()).endsWith('*')){
+                QmlListModel* subList = reinterpret_cast<QmlListModel*>(qvariant_cast<QObject *>(p.read(t)));
+                if(subList != Q_NULLPTR)
+                    s >> subList;
+                else
+                    qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Null property.";
+                    //subList = new QmlListModel; // TBD
+            } else {
+                QVariant v;
+                s >> v;
+                p.write(t, v);
+            }
+        }
+        appendData(t);
+        if (s.atEnd())
+            break;
+    }
 }
 
 template<typename T>

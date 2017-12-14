@@ -9,11 +9,10 @@ class Apartment : public QObject
     Q_PROPERTY(QString apartmentName MEMBER mName)
     Q_PROPERTY(MemberModel* members MEMBER mMembers)
 public:
-    explicit Apartment(){}
-    explicit Apartment(QString aName,
-                       MemberModel* aMembers):
+    explicit Apartment(QString aName = QString(),
+                       MemberModel* aMembers = Q_NULLPTR):
         mName(aName),
-        mMembers(aMembers){}
+        mMembers(aMembers == Q_NULLPTR?new MemberModel:aMembers){}
 
     QString         mName;
     MemberModel*    mMembers;
