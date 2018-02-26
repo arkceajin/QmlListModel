@@ -1,12 +1,24 @@
 #ifndef QMLLISTMODEL_H
 #define QMLLISTMODEL_H
 
+/**
+  * Enable or Disable Serialize
+  */
+#define UsingSerialize  0
+
+/**
+  * Enable or Disable Json
+  */
+#define UsingJson       0
+
 #include <QAbstractListModel>
 #include <QMetaProperty>
 #include <QQmlEngine>
+#if UsingJson
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#endif
 #include <QDebug>
 
 /**
@@ -19,6 +31,7 @@ public:
     explicit QAbstractBase(QObject *parent = 0):
     QAbstractListModel(parent){}
 
+#if UsingSerialize
     virtual void fromBytes(QDataStream& s){
         Q_UNUSED(s);
     }
@@ -27,6 +40,16 @@ public:
         Q_UNUSED(s);
     }
 
+    virtual QByteArray serialize(){
+        return QByteArray();
+    }
+
+    virtual void unserialize(QByteArray data) {
+        Q_UNUSED(data);
+    }
+#endif
+
+#if UsingJson
     virtual QJsonArray toJson(){
         return QJsonArray();
     }
@@ -41,17 +64,13 @@ public:
         Q_UNUSED(obj);
         return false;
     }
-
-    virtual QByteArray serialize(){
-        return QByteArray();
-    }
-
-    virtual void unserialize(QByteArray data) {
-        Q_UNUSED(data);
-    }
-
+#endif
 };
 
+/**
+  * API for Javascript side.
+  * The data operation directly manipulates the pointer of object.
+  */
 #define QML_LIST_MODEL \
 public: \
     Q_INVOKABLE inline static QVariant create(){return create_();} \
@@ -72,14 +91,12 @@ class QmlListModel : public QAbstractBase
 {
 public:
     inline explicit QmlListModel(QObject *parent = 0);
-    inline explicit QmlListModel(QJsonArray jsonArray){
-        fromJson(jsonArray);
-    }
+
+    ~QmlListModel();
+#if UsingSerialize
     inline explicit QmlListModel(QByteArray byteArray){
         unserialize(byteArray);
     }
-    ~QmlListModel();
-
     /**
      * @brief serialize
      * @return Serialized data
@@ -125,6 +142,12 @@ public:
     {
         data->toBytes(s);
         return s;
+    }
+#endif
+
+#if UsingJson
+    inline explicit QmlListModel(QJsonArray jsonArray){
+        fromJson(jsonArray);
     }
 
     void fromBytes(QDataStream& s) override;
@@ -172,7 +195,7 @@ public:
      * @return the result of converion
      */
     bool fromJson(QJsonArray array) override;
-
+#endif
     /**
      * @brief clear
      */
@@ -235,6 +258,11 @@ public:
      */
     bool removeData(int i);
 
+signals:
+
+public slots:
+
+protected:
     /**
      * @brief create_
      * @return
@@ -275,11 +303,6 @@ public:
         return setData(i, data.value<T*>());
     }
 
-signals:
-
-public slots:
-
-protected:
     /**
      * @brief roleNames
      * @return
@@ -307,6 +330,7 @@ QmlListModel<T>::~QmlListModel()
     clear();
 }
 
+#if UsingSerialize
 template<typename T>
 void QmlListModel<T>::toBytes(QDataStream &s)
 {
@@ -327,6 +351,40 @@ void QmlListModel<T>::toBytes(QDataStream &s)
     }
 }
 
+template<typename T>
+void QmlListModel<T>::fromBytes(QDataStream &s)
+{
+    QList<T*>& l = this->mData;
+    l.clear();
+    quint32 c;
+    s >> c;
+    l.reserve(c);
+    for(quint32 i = 0; i < c; ++i) {
+        T* t = new T;
+        const QMetaObject* metaData = t->metaObject();
+        for(int j = metaData->propertyOffset(); j < metaData->propertyCount(); ++j) {
+            const QMetaProperty& p = metaData->property(j);
+            if(QString(p.typeName()).endsWith('*')){
+                QmlListModel* subList = reinterpret_cast<QmlListModel*>(qvariant_cast<QObject *>(p.read(t)));
+                if(subList != Q_NULLPTR)
+                    s >> subList;
+                else
+                    qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Null property.";
+                    //subList = new QmlListModel; // TBD
+            } else {
+                QVariant v;
+                s >> v;
+                p.write(t, v);
+            }
+        }
+        appendData(t);
+        if (s.atEnd())
+            break;
+    }
+}
+#endif
+
+#if UsingJson
 template<typename T>
 QJsonArray QmlListModel<T>::toJson()
 {
@@ -450,38 +508,7 @@ bool QmlListModel<T>::fromJson(QJsonArray array)
     }
     return true;
 }
-
-template<typename T>
-void QmlListModel<T>::fromBytes(QDataStream &s)
-{
-    QList<T*>& l = this->mData;
-    l.clear();
-    quint32 c;
-    s >> c;
-    l.reserve(c);
-    for(quint32 i = 0; i < c; ++i) {
-        T* t = new T;
-        const QMetaObject* metaData = t->metaObject();
-        for(int j = metaData->propertyOffset(); j < metaData->propertyCount(); ++j) {
-            const QMetaProperty& p = metaData->property(j);
-            if(QString(p.typeName()).endsWith('*')){
-                QmlListModel* subList = reinterpret_cast<QmlListModel*>(qvariant_cast<QObject *>(p.read(t)));
-                if(subList != Q_NULLPTR)
-                    s >> subList;
-                else
-                    qDebug()<<"QmlListModel"<<__FUNCTION__<<"Error: Null property.";
-                    //subList = new QmlListModel; // TBD
-            } else {
-                QVariant v;
-                s >> v;
-                p.write(t, v);
-            }
-        }
-        appendData(t);
-        if (s.atEnd())
-            break;
-    }
-}
+#endif
 
 template<typename T>
 void QmlListModel<T>::clear()
