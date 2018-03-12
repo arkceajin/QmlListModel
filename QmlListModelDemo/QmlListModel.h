@@ -544,6 +544,7 @@ template<typename T>
 void QmlListModel<T>::appendData(T *data)
 {
     beginInsertRows(QModelIndex(), mData.count(), mData.count());
+    QQmlEngine::setObjectOwnership(data, QQmlEngine::CppOwnership);
     mData.push_back(data);
     endInsertRows();
 }
@@ -562,6 +563,7 @@ bool QmlListModel<T>::insertData(int i, T *data)
     if (i < 0 || i > mData.count())
         return false;
     beginInsertRows(QModelIndex(), i, i);
+    QQmlEngine::setObjectOwnership(data, QQmlEngine::CppOwnership);
     mData.insert(mData.begin() + i, data);
     endInsertRows();
     return true;
@@ -583,6 +585,7 @@ bool QmlListModel<T>::setData(int i, T* data)
     if (mData[i] == Q_NULLPTR)
         return false;
     mData[i]->deleteLater();
+    QQmlEngine::setObjectOwnership(data, QQmlEngine::CppOwnership);
     mData[i] = data;
     dataChanged(index(i), index(i));
     return true;
