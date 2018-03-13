@@ -15,9 +15,12 @@
 #include <QMetaProperty>
 #include <QQmlEngine>
 #if UsingJson
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
+    #include <QJsonDocument>
+    #include <QJsonObject>
+    #include <QJsonArray>
+#endif
+#if UsingSerialize
+    #include <QDataStream>
 #endif
 #include <QDebug>
 
