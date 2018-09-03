@@ -1,4 +1,9 @@
 # QmlListModel
+
+### This is a Abandoned repository, I made a smailiar one [QmlObjectList][1]
+
+  [1]: https://github.com/arkceajin/QtDemos#5-qmlobjectlist
+  
 Expose a list of your customized C++ data structure to QML, easily access data from C++ and QML both sides.
 
 ## How to add QmlListModel in your project
